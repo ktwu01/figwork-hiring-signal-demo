@@ -459,16 +459,32 @@ function renderRoleSignals() {
   roleSignals.innerHTML = signalDefinitions
     .map((signal) => {
       const weight = signal.terms.reduce((s, t) => s + (roleVec.get(t) || 0), 0);
-      const importance = weight > 3 ? "High" : weight > 0 ? "Medium" : "Implicit";
+      const importance = weight > 3 ? "Required" : weight > 0 ? "Preferred" : "Inferred";
       const tone = weight > 3 ? "high" : weight > 0 ? "med" : "low";
+      const hint = weight > 3
+        ? "Explicitly emphasized in the role brief"
+        : weight > 0
+        ? "Mentioned in the role brief"
+        : "Not stated in the brief; inferred as a soft signal";
       return `
         <div class="role-signal">
           <strong>${signal.label}</strong>
-          <span class="req-tag ${tone}">${importance}</span>
+          <span class="req-tag ${tone}" title="${hint}">${importance}</span>
         </div>
       `;
     })
     .join("");
+}
+
+// Status badges shared by the card and the decision header. Shortlisted and
+// interview-requested are distinct states; concern is a separate flag.
+function badgeRow(candidate, context) {
+  const badges = [];
+  if (candidate.stage === "conversation") badges.push(`<span class="stage-badge">Shortlisted</span>`);
+  if (candidate.interviewRequested) badges.push(`<span class="interview-badge">Interview requested</span>`);
+  if (candidate.concern) badges.push(`<span class="concern-badge">${context === "head" ? "Concern flagged" : "Concern"}</span>`);
+  if (!badges.length) return "";
+  return `<div class="card-badges ${context === "head" ? "head-badges" : ""}">${badges.join("")}</div>`;
 }
 
 function renderCandidateList(scoredCandidates) {
@@ -486,29 +502,36 @@ function renderCandidateList(scoredCandidates) {
   candidateList.innerHTML = scoredCandidates
     .map((candidate, index) => {
       const strengths = candidateStrengths(candidate);
-      const topTwo = strengths.length ? strengths.slice(0, 2).join(", ") : "Evidence still thin";
+      const visible = strengths.slice(0, 2);
+      const extra = strengths.length - visible.length;
+      // Strong signals are listed as "Top signals". With none, do not call weak
+      // evidence a signal: show an evidence-status line instead.
+      const hasStrengths = visible.length > 0;
+      const signalLine = hasStrengths
+        ? `Top signals: ${esc(visible.join(" · ") + (extra > 0 ? ` +${extra}` : ""))}`
+        : `Evidence status: Thin`;
+      const selected = candidate.id === selectedId;
       return `
-      <div class="candidate-card ${candidate.id === selectedId ? "active" : ""}" data-id="${esc(candidate.id)}">
+      <div class="candidate-card ${selected ? "active" : ""}" data-id="${esc(candidate.id)}">
+        <div class="menu-wrap">
+          <button class="menu-btn" type="button" data-menu="${esc(candidate.id)}" aria-haspopup="true" aria-expanded="false" aria-label="More actions for ${esc(candidate.name)}">⋯</button>
+          <div class="menu-pop" data-menu-pop="${esc(candidate.id)}" hidden>
+            <button type="button" data-edit="${esc(candidate.id)}">Edit candidate</button>
+            <button type="button" class="danger" data-remove="${esc(candidate.id)}">Remove</button>
+          </div>
+        </div>
         <button class="card-main" type="button" data-select="${esc(candidate.id)}">
           <div class="candidate-topline">
             <span class="candidate-name"><span class="rank-badge">#${index + 1}</span>${esc(candidate.name)}</span>
             <span class="fit-chip"><strong>${candidate.score.fit}</strong><small>fit</small></span>
           </div>
-          <p class="card-headline">${esc(candidate.headline)}${candidate.stage === "conversation" ? ` <span class="stage-badge">In conversation</span>` : ""}${candidate.concern ? ` <span class="concern-badge">Concern</span>` : ""}</p>
-          <p class="card-signal"><span class="dot up"></span>Top signals: ${esc(topTwo)}</p>
-          <p class="card-risk"><span class="dot down"></span>Risk: ${esc(topRisk(candidate))}</p>
-          ${candidate.note ? `<p class="card-note"><span class="dot note"></span>Note: ${esc(candidate.note)}</p>` : ""}
+          <p class="card-headline">${esc(candidate.headline)}</p>
+          ${badgeRow(candidate, "")}
+          <p class="card-signal"><span class="dot ${hasStrengths ? "up" : "flat"}"></span><span class="line-1">${signalLine}</span></p>
+          <p class="card-risk"><span class="dot down"></span><span class="line-1">Risk: ${esc(topRisk(candidate))}</span></p>
+          ${candidate.note ? `<p class="card-note"><span class="dot note"></span><span class="line-1">Note: ${esc(candidate.note)}</span></p>` : ""}
+          <span class="review-cue">${selected ? "Reviewing →" : "Review →"}</span>
         </button>
-        <div class="card-foot">
-          <span class="review-cue">${candidate.id === selectedId ? "Reviewing" : "Review"}</span>
-          <div class="menu-wrap">
-            <button class="menu-btn" type="button" data-menu="${esc(candidate.id)}" aria-label="More actions for ${esc(candidate.name)}">⋯</button>
-            <div class="menu-pop" data-menu-pop="${esc(candidate.id)}" hidden>
-              <button type="button" data-edit="${esc(candidate.id)}">Edit candidate</button>
-              <button type="button" class="danger" data-remove="${esc(candidate.id)}">Remove</button>
-            </div>
-          </div>
-        </div>
       </div>
     `;
     })
@@ -531,9 +554,12 @@ function renderCandidateList(scoredCandidates) {
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       const pop = candidateList.querySelector(`[data-menu-pop="${CSS.escape(b.dataset.menu)}"]`);
-      const wasHidden = pop.hidden;
+      const willOpen = pop.hidden;
+      // Close every menu first so only one is ever open at a time.
       candidateList.querySelectorAll(".menu-pop").forEach((p) => (p.hidden = true));
-      pop.hidden = !wasHidden;
+      candidateList.querySelectorAll("[data-menu]").forEach((m) => m.setAttribute("aria-expanded", "false"));
+      pop.hidden = !willOpen;
+      b.setAttribute("aria-expanded", String(willOpen));
     })
   );
 }
@@ -545,13 +571,15 @@ function renderDetail(candidate, rank) {
   detailContent.innerHTML = `
     <header class="decision-head">
       <div class="decision-id">
-        <h3 class="decision-name">${esc(candidate.name)}${inConvo ? ` <span class="stage-badge">In conversation</span>` : ""}${candidate.concern ? ` <span class="concern-badge">Concern flagged</span>` : ""}</h3>
+        <h3 class="decision-name">${esc(candidate.name)}</h3>
+        ${badgeRow(candidate, "head")}
         <p class="decision-sub">${esc(candidate.headline)}</p>
         <p class="decision-meta">${esc(availabilityPlain(candidate))}</p>
       </div>
       <div class="decision-score">
-        <span class="big-fit">${candidate.score.fit}</span>
-        <span class="fit-caption">fit · rank #${rank} of ${candidates.length}</span>
+        <span class="big-fit">${candidate.score.fit}<small>/100 fit</small></span>
+        <span class="fit-interp">${esc(fitInterpretation(candidate))}</span>
+        <span class="fit-caption">rank #${rank} of ${candidates.length} · interview threshold ${INTERVIEW_THRESHOLD}</span>
       </div>
     </header>
 
@@ -561,20 +589,20 @@ function renderDetail(candidate, rank) {
     </div>
 
     <div class="decision-action-row">
-      <button class="primary" type="button" id="actShortlist">${inConvo ? "In shortlist ✓" : "Shortlist candidate"}</button>
-      <button class="secondary" type="button" id="actInterview">${inConvo ? "Back to shortlist" : "Request interview"}</button>
+      <button class="primary" type="button" id="actInterview">${candidate.interviewRequested ? "Interview requested ✓" : "Request interview"}</button>
+      <button class="pill-toggle ${inConvo ? "on" : ""}" type="button" id="actShortlist" aria-pressed="${inConvo}">${inConvo ? "Shortlisted ✓" : "Add to shortlist"}</button>
       <button class="ghost-btn" type="button" id="actNote">${candidate.note ? "Edit note" : "Add note"}</button>
-      <button class="ghost-btn ${candidate.concern ? "active-concern" : ""}" type="button" id="actConcern">${candidate.concern ? "Clear concern" : "Mark concern"}</button>
+      <button class="ghost-btn ${candidate.concern ? "active-concern" : ""}" type="button" id="actConcern" aria-pressed="${!!candidate.concern}">${candidate.concern ? "Clear concern" : "Mark concern"}</button>
     </div>
 
     ${candidate.note ? `<div class="note-block"><span class="note-label">Recruiter note</span><p>${esc(candidate.note)}</p></div>` : ""}
 
     <div class="strength-risk">
       <div class="sr-col">
-        <p class="sr-head up">Strengths</p>
+        <p class="sr-head up">${candidateStrengths(candidate).length ? "Strengths" : "Potential strengths"}</p>
         <ul>${(candidateStrengths(candidate).length
             ? candidateStrengths(candidate)
-            : ["Not enough evidence yet to confirm strengths"]
+            : [potentialStrength(candidate)]
           ).map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
       </div>
       <div class="sr-col">
@@ -592,10 +620,11 @@ function renderDetail(candidate, rank) {
     <div id="tabContent"></div>
   `;
 
-  // Wire the recruiter decision buttons. Shortlist/interview reuse the existing
-  // stage toggle; note/concern attach a lightweight flag the card can show.
-  el("#actShortlist").addEventListener("click", () => toggleStage(candidate, true));
-  el("#actInterview").addEventListener("click", () => toggleStage(candidate, false));
+  // Wire the recruiter decision buttons. "Request interview" is the primary
+  // action (moves the candidate into conversation); the shortlist pill toggles
+  // membership; note/concern attach a flag the card surfaces.
+  el("#actInterview").addEventListener("click", () => requestInterview(candidate));
+  el("#actShortlist").addEventListener("click", () => toggleStage(candidate));
   el("#actNote").addEventListener("click", () => addNote(candidate));
   el("#actConcern").addEventListener("click", () => markConcern(candidate));
 
@@ -625,15 +654,12 @@ function renderTab(candidate, rank) {
             <article class="signal-card ${signal.band.tone}">
               <div class="signal-row">
                 <span class="signal-name">${signal.label} — ${signal.band.label}</span>
-                <span class="signal-score">${signal.score}</span>
+                <span class="micro-bar" aria-hidden="true"><span style="--fill: ${signal.score}%"></span></span>
               </div>
-              <div class="bar-track"><div class="bar-fill" style="--fill: ${signal.score}%"></div></div>
+              <p class="signal-meta">Score ${signal.score}/100 · Source: ${signal.sources.length ? esc(signal.sources.join(", ")) : "no matched evidence"}</p>
               <p class="ev-line"><strong>Evidence.</strong> ${esc(signal.evidence)}</p>
               <p class="ev-line muted-line"><strong>Why it matters.</strong> ${esc(signal.whyItMatters)}</p>
               <p class="ev-line concern-line"><strong>Concern.</strong> ${esc(signal.concern)}</p>
-              <p class="ev-source">
-                <span>Source: ${signal.sources.length ? esc(signal.sources.join(" + ")) : "no matched evidence"}</span>
-              </p>
             </article>
           `)
           .join("")}
@@ -743,10 +769,19 @@ function compareTargetName(candidate) {
 
 /* ---------- Recruiter decision actions ---------- */
 
-function toggleStage(candidate, wantShortlist) {
-  // "Shortlist" marks the candidate as in conversation; "Request interview"
-  // toggles it back. One stage flag keeps the demo state simple but real.
-  candidate.stage = wantShortlist ? "conversation" : "shortlist";
+// The shortlist pill toggles whether the candidate sits in the active
+// conversation/shortlist stage. (One stage flag keeps the demo state simple.)
+function toggleStage(candidate) {
+  candidate.stage = candidate.stage === "conversation" ? "shortlist" : "conversation";
+  saveState();
+  render();
+}
+
+// "Request interview" is the committing action: it moves the candidate into the
+// conversation stage and (for the demo) confirms the request inline.
+function requestInterview(candidate) {
+  candidate.stage = "conversation";
+  candidate.interviewRequested = true;
   saveState();
   render();
 }
@@ -781,20 +816,37 @@ function candidateStrengths(candidate) {
     .map((s) => s.label);
 }
 
-// Risks = the weakest signals plus any logistics flag (location / confidence).
+// Phrase a weak signal as a recruiter note rather than a model label. The
+// wording varies by how thin the evidence is.
+function riskPhrase(signal) {
+  if (signal.score < 20) return `No evidence yet for ${signal.label.toLowerCase()}`;
+  return `${signal.label} needs stronger proof`;
+}
+
+// For a candidate with no confirmed strengths, name the closest partial match
+// so the "Potential strengths" slot is informative rather than empty.
+function potentialStrength(candidate) {
+  const best = [...candidate.score.signals].sort((a, b) => b.score - a.score)[0];
+  if (!best || best.score === 0) {
+    return "No supporting evidence yet; request resume or project details.";
+  }
+  return `Possible ${best.label.toLowerCase()}, but evidence is incomplete; verify before relying on it.`;
+}
+
+// Risks = the weakest signals phrased as notes, plus any logistics flag.
 function candidateRisks(candidate) {
   const risks = [...candidate.score.signals]
     .filter((s) => s.score < 50)
     .sort((a, b) => a.score - b.score)
     .slice(0, 2)
-    .map((s) => `${s.label} not yet demonstrated`);
+    .map(riskPhrase);
   if (candidate.score.requiresInPerson && candidate.location === "remote-only") {
     risks.push("Not available for in-person Sunnyvale work");
   } else if (candidate.location === "relocating") {
-    risks.push("Relocation and visa logistics need review");
+    risks.push("Relocation and visa status need review");
   }
   if (candidate.score.confidence < 70) {
-    risks.push("Limited evidence overall; confidence is moderate");
+    risks.push("Limited context overall; treat scores as provisional");
   }
   return risks.slice(0, 4);
 }
@@ -802,6 +854,18 @@ function candidateRisks(candidate) {
 // The single short risk line shown on the compact shortlist card.
 function topRisk(candidate) {
   return candidateRisks(candidate)[0] || "No major risks flagged";
+}
+
+// Demo interview threshold: candidates at or above this are "interview-ready".
+// Anchors the fit number so 77 reads as actionable, not decorative.
+const INTERVIEW_THRESHOLD = 70;
+
+// Operational interpretation of a fit score: a band plus how many risks remain.
+function fitInterpretation(candidate) {
+  const fit = candidate.score.fit;
+  const riskCount = candidateRisks(candidate).length;
+  const band = fit >= INTERVIEW_THRESHOLD ? "Strong fit" : fit >= 50 ? "Moderate fit" : "Weak fit";
+  return `${band} · verify ${riskCount} risk${riskCount === 1 ? "" : "s"}`;
 }
 
 // Plain-English confidence label for the evidence-mass confidence number.
@@ -819,17 +883,29 @@ function topGapLabel(candidate) {
   return weakest ? weakest.label.toLowerCase() : "the open gaps";
 }
 
-// One-line recommended next step for the decision header, conditioned on the
-// dominant strength vs. the dominant gap.
+// Action-first recommended next step: a verb, then the risks to test. Lists up
+// to two of the weakest signals as the things an interview should verify.
 function recommendedStep(candidate, rank) {
   const strengths = candidateStrengths(candidate);
+  const toVerify = [...candidate.score.signals]
+    .filter((s) => s.score < 50)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 2)
+    .map((s) => s.label.toLowerCase());
+  const verifyClause = toVerify.length
+    ? ` Verify ${toVerify.join(" and ")}.`
+    : "";
+
   if (rank === 1 && strengths.length) {
-    return `Interview if you weight ${strengths[0].toLowerCase()} above ${topGapLabel(candidate)}.`;
+    return `Recommend interview.${verifyClause}`;
   }
   if (strengths.length) {
-    return `Keep on the shortlist, then verify ${topGapLabel(candidate)} before deciding.`;
+    return `Keep on the shortlist.${verifyClause || ` Verify ${topGapLabel(candidate)}.`}`;
   }
-  return "Request more context before investing recruiter time.";
+  // No confirmed strengths: say exactly what evidence is missing.
+  return toVerify.length
+    ? `Request evidence for ${toVerify.join(" and ")} before investing recruiter time.`
+    : "Request project evidence before investing recruiter time.";
 }
 
 function render() {
