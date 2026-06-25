@@ -27,6 +27,12 @@ No dependencies are required.
 3. In the repo settings, enable GitHub Pages from the `main` branch root.
 4. Share the generated Pages URL.
 
+With the GitHub CLI, from this folder:
+
+```bash
+gh repo create figwork-hiring-signal-demo --public --source=. --remote=origin --push
+```
+
 ## Files
 
 - `index.html` - app shell and content regions
