@@ -2,6 +2,8 @@
 
 A small static prototype for a Figwork-style hiring signal workflow.
 
+Live demo: https://koutian.is-a.dev/figwork-hiring-signal-demo/
+
 The demo is intentionally narrow: it shows how text, audio transcript, and video interview notes can become structured hiring signals, ranked candidate-role fit, evidence gaps, and recruiter next actions. It is not a production matching model and does not call an LLM. The scoring is transparent rule-based JavaScript so the product loop is easy to inspect.
 
 ## Why this exists
