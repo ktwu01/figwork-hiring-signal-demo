@@ -25,40 +25,58 @@ const FIELD_WEIGHTS = { text: 1.0, audio: 0.7, video: 0.55, tags: 0.4 };
 const BM25_K1 = 1.4;
 const BM25_B = 0.6;
 
+// Each signal carries not just match terms but the recruiter-facing meaning:
+// `whyItMatters` (why the role needs it) and `concern` (the standing caveat a
+// recruiter should verify). These turn analytics into a decision aid.
 const signalDefinitions = [
   {
     key: "ownership",
     label: "Startup ownership",
-    color: "teal",
     // All terms are single tokens so they match the tokenizer output. "scratch"
     // stands in for "from scratch"; phrase matching is out of scope for the demo.
-    terms: ["co-founder", "founder", "owned", "ownership", "built", "shipped", "lead", "maintainer", "scratch", "repo", "ci/cd", "release"]
+    terms: ["co-founder", "founder", "owned", "ownership", "built", "shipped", "lead", "maintainer", "scratch", "repo", "ci/cd", "release"],
+    whyItMatters: "This role needs someone who can own ambiguous product work end to end without heavy process.",
+    concern: "Evidence is self-described project context. Verify production usage, user traction, and team size."
   },
   {
     key: "fullstack",
     label: "Full-stack execution",
-    color: "green",
-    terms: ["react", "electron", "node", "express", "supabase", "oauth", "fastapi", "backend", "frontend", "typescript", "javascript", "sqlite", "vite", "postgres"]
+    terms: ["react", "electron", "node", "express", "supabase", "oauth", "fastapi", "backend", "frontend", "typescript", "javascript", "sqlite", "vite", "postgres"],
+    whyItMatters: "The team ships across the stack, so one engineer needs to move from data layer to UI.",
+    concern: "Confirm depth on each layer rather than breadth of named technologies."
   },
   {
     key: "aiworkflow",
     label: "AI workflow depth",
-    color: "plum",
-    terms: ["llm", "agent", "agents", "rag", "evaluation", "eval", "llm-as-judge", "prompt", "multimodal", "audio", "video", "model", "matching", "ranking", "embedding"]
+    terms: ["llm", "agent", "agents", "rag", "evaluation", "eval", "llm-as-judge", "prompt", "multimodal", "audio", "video", "model", "matching", "ranking", "embedding"],
+    whyItMatters: "The product is an AI hiring platform; real LLM evaluation and retrieval experience reduces ramp time.",
+    concern: "Check whether AI work reached production or stayed at prototype scale."
   },
   {
     key: "hiring",
     label: "Hiring-market empathy",
-    color: "amber",
-    terms: ["recruiter", "recruiters", "candidate", "candidates", "hiring", "job", "resume", "interview", "talent", "portfolio", "outreach", "conversation", "ats"]
+    terms: ["recruiter", "recruiters", "candidate", "candidates", "hiring", "job", "resume", "interview", "talent", "portfolio", "outreach", "conversation", "ats"],
+    whyItMatters: "Building for recruiters and candidates is easier with someone who understands the hiring workflow.",
+    concern: "Direct experience with recruiter or candidate workflows is often thin; probe in interview."
   },
   {
     key: "reliability",
     label: "Reliability habits",
-    color: "teal",
-    terms: ["test", "tests", "tdd", "ci/cd", "quality", "metrics", "audit", "privacy", "pii", "sanitization", "production", "monitoring", "observability"]
+    terms: ["test", "tests", "tdd", "ci/cd", "quality", "metrics", "audit", "privacy", "pii", "sanitization", "production", "monitoring", "observability"],
+    whyItMatters: "Early-stage code still has to be safe to ship; testing and review habits keep velocity sustainable.",
+    concern: "Confirm these habits held under real deadlines, not only in side projects."
   }
 ];
+
+// Map a 0-100 signal score to a plain-English strength band and a one-line
+// recruiter meaning. Used everywhere a score is shown so language stays
+// consistent instead of leaning on raw numbers.
+function strengthBand(score) {
+  if (score >= 75) return { label: "Strong evidence", tone: "strong" };
+  if (score >= 55) return { label: "Some evidence", tone: "ok" };
+  if (score >= 35) return { label: "Limited evidence", tone: "weak" };
+  return { label: "Weak evidence", tone: "weak" };
+}
 
 const SEED_CANDIDATES = [
   {
@@ -146,20 +164,16 @@ const roleTitle = el("#role-title");
 const roleSub = el("#role-sub");
 const roleSignals = el("#roleSignals");
 const candidateList = el("#candidateList");
-const selectedName = el("#selectedName");
-const selectedHeadline = el("#selectedHeadline");
-const scoreValue = el("#scoreValue");
-const scoreRing = el("#scoreRing");
-const tabContent = el("#tabContent");
+const detailContent = el("#detailContent");
 const sortMode = el("#sortMode");
 const candidateCount = el("#candidateCount");
-const topScore = el("#topScore");
-const reviewCount = el("#reviewCount");
 const resetButton = el("#resetButton");
 const addCandidateButton = el("#addCandidateButton");
 const editorBackdrop = el("#editorBackdrop");
 const editorForm = el("#editorForm");
 const editorTitle = el("#editorTitle");
+const editRoleButton = el("#editRoleButton");
+const roleBackdrop = el("#roleBackdrop");
 
 const DEFAULT_ROLE_TITLE = roleTitle.textContent;
 const DEFAULT_ROLE_SUB = roleSub.textContent;
@@ -324,8 +338,10 @@ function scoreCandidate(candidate, roleBrief) {
       ...signal,
       raw,
       score,
+      band: strengthBand(score),
       contributors: contributors.slice(0, 3),
-      evidence: extractEvidence(candidate, signal.terms)
+      evidence: extractEvidence(candidate, signal.terms),
+      sources: evidenceSources(candidate, signal.terms)
     };
   });
 
@@ -365,6 +381,26 @@ function extractEvidence(candidate, terms) {
     }
   }
   return best || "No strong evidence found in the provided context.";
+}
+
+// Which provided fields actually contain matched terms for this signal. Surfaces
+// provenance ("Resume + Screening call") so a recruiter can see where a score
+// came from instead of trusting an opaque number.
+const FIELD_SOURCES = [
+  { key: "text", label: "Resume" },
+  { key: "audio", label: "Screening call" },
+  { key: "video", label: "Interview notes" }
+];
+
+function evidenceSources(candidate, terms) {
+  const hits = FIELD_SOURCES.filter((field) => {
+    const lower = (candidate[field.key] || "").toLowerCase();
+    return terms.some((term) => lower.includes(term));
+  }).map((field) => field.label);
+  if (candidate.tags.some((tag) => terms.some((t) => tag.toLowerCase().includes(t)))) {
+    hits.push("Self-declared tags");
+  }
+  return hits;
 }
 
 // Parse a hard in-person/onsite constraint out of the role brief. The location
@@ -424,10 +460,11 @@ function renderRoleSignals() {
     .map((signal) => {
       const weight = signal.terms.reduce((s, t) => s + (roleVec.get(t) || 0), 0);
       const importance = weight > 3 ? "High" : weight > 0 ? "Medium" : "Implicit";
+      const tone = weight > 3 ? "high" : weight > 0 ? "med" : "low";
       return `
         <div class="role-signal">
           <strong>${signal.label}</strong>
-          <span>${importance}</span>
+          <span class="req-tag ${tone}">${importance}</span>
         </div>
       `;
     })
@@ -439,40 +476,48 @@ function renderCandidateList(scoredCandidates) {
     candidateList.innerHTML = `
       <div class="empty-note">
         No candidates yet. <strong>+ Add candidate</strong> to paste a resume and see the ranking,
-        or use <strong>Reset</strong> to restore the sample set.
+        or use <strong>Reset demo</strong> to restore the sample set.
       </div>`;
     return;
   }
 
+  // Compact decision card: rank, name, headline, one fit number, top signals,
+  // one risk line, a single Review button, and admin actions tucked in a menu.
   candidateList.innerHTML = scoredCandidates
-    .map((candidate, index) => `
+    .map((candidate, index) => {
+      const strengths = candidateStrengths(candidate);
+      const topTwo = strengths.length ? strengths.slice(0, 2).join(", ") : "Evidence still thin";
+      return `
       <div class="candidate-card ${candidate.id === selectedId ? "active" : ""}" data-id="${esc(candidate.id)}">
         <button class="card-main" type="button" data-select="${esc(candidate.id)}">
           <div class="candidate-topline">
             <span class="candidate-name"><span class="rank-badge">#${index + 1}</span>${esc(candidate.name)}</span>
-            <span class="candidate-score">${candidate.score.fit}</span>
+            <span class="fit-chip"><strong>${candidate.score.fit}</strong><small>fit</small></span>
           </div>
-          <p>${esc(candidate.headline)}${candidate.stage === "conversation" ? ` <span class="stage-badge">In conversation</span>` : ""}</p>
-          <div class="mini-metrics">
-            <span title="Role relevance (cosine)">rel ${candidate.score.relevance}</span>
-            <span title="Calibrated confidence">conf ${candidate.score.confidence}</span>
-            <span title="Conversation readiness">conv ${candidate.score.conversation}</span>
-          </div>
-          <div class="tag-row">
-            ${candidate.tags.slice(0, 4).map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")}
-          </div>
+          <p class="card-headline">${esc(candidate.headline)}${candidate.stage === "conversation" ? ` <span class="stage-badge">In conversation</span>` : ""}${candidate.concern ? ` <span class="concern-badge">Concern</span>` : ""}</p>
+          <p class="card-signal"><span class="dot up"></span>Top signals: ${esc(topTwo)}</p>
+          <p class="card-risk"><span class="dot down"></span>Risk: ${esc(topRisk(candidate))}</p>
+          ${candidate.note ? `<p class="card-note"><span class="dot note"></span>Note: ${esc(candidate.note)}</p>` : ""}
         </button>
-        <div class="card-tools">
-          <button class="card-tool" type="button" data-edit="${esc(candidate.id)}" aria-label="Edit ${esc(candidate.name)}">Edit</button>
-          <button class="card-tool danger" type="button" data-remove="${esc(candidate.id)}" aria-label="Remove ${esc(candidate.name)}">Remove</button>
+        <div class="card-foot">
+          <span class="review-cue">${candidate.id === selectedId ? "Reviewing" : "Review"}</span>
+          <div class="menu-wrap">
+            <button class="menu-btn" type="button" data-menu="${esc(candidate.id)}" aria-label="More actions for ${esc(candidate.name)}">⋯</button>
+            <div class="menu-pop" data-menu-pop="${esc(candidate.id)}" hidden>
+              <button type="button" data-edit="${esc(candidate.id)}">Edit candidate</button>
+              <button type="button" class="danger" data-remove="${esc(candidate.id)}">Remove</button>
+            </div>
+          </div>
         </div>
       </div>
-    `)
+    `;
+    })
     .join("");
 
   candidateList.querySelectorAll("[data-select]").forEach((b) =>
     b.addEventListener("click", () => {
       selectedId = b.dataset.select;
+      saveState();
       render();
     })
   );
@@ -482,42 +527,113 @@ function renderCandidateList(scoredCandidates) {
   candidateList.querySelectorAll("[data-remove]").forEach((b) =>
     b.addEventListener("click", () => removeCandidate(b.dataset.remove))
   );
+  candidateList.querySelectorAll("[data-menu]").forEach((b) =>
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const pop = candidateList.querySelector(`[data-menu-pop="${CSS.escape(b.dataset.menu)}"]`);
+      const wasHidden = pop.hidden;
+      candidateList.querySelectorAll(".menu-pop").forEach((p) => (p.hidden = true));
+      pop.hidden = !wasHidden;
+    })
+  );
 }
 
-function renderDetail(candidate) {
-  selectedName.textContent = candidate.name + (candidate.stage === "conversation" ? "  (in conversation)" : "");
-  selectedHeadline.textContent = `${candidate.headline} · ${candidate.availability}`;
-  scoreValue.textContent = candidate.score.fit;
-  scoreRing.style.setProperty("--score-deg", `${candidate.score.fit * 3.6}deg`);
-  renderTab(candidate);
+// The decision view: answers "who, why, what next" in one column. Built fully in
+// JS so the header, decision summary, tabs, and tab body re-render together.
+function renderDetail(candidate, rank) {
+  const inConvo = candidate.stage === "conversation";
+  detailContent.innerHTML = `
+    <header class="decision-head">
+      <div class="decision-id">
+        <h3 class="decision-name">${esc(candidate.name)}${inConvo ? ` <span class="stage-badge">In conversation</span>` : ""}${candidate.concern ? ` <span class="concern-badge">Concern flagged</span>` : ""}</h3>
+        <p class="decision-sub">${esc(candidate.headline)}</p>
+        <p class="decision-meta">${esc(availabilityPlain(candidate))}</p>
+      </div>
+      <div class="decision-score">
+        <span class="big-fit">${candidate.score.fit}</span>
+        <span class="fit-caption">fit · rank #${rank} of ${candidates.length}</span>
+      </div>
+    </header>
+
+    <div class="next-step">
+      <span class="next-label">Recommended next step</span>
+      <p>${esc(recommendedStep(candidate, rank))}</p>
+    </div>
+
+    <div class="decision-action-row">
+      <button class="primary" type="button" id="actShortlist">${inConvo ? "In shortlist ✓" : "Shortlist candidate"}</button>
+      <button class="secondary" type="button" id="actInterview">${inConvo ? "Back to shortlist" : "Request interview"}</button>
+      <button class="ghost-btn" type="button" id="actNote">${candidate.note ? "Edit note" : "Add note"}</button>
+      <button class="ghost-btn ${candidate.concern ? "active-concern" : ""}" type="button" id="actConcern">${candidate.concern ? "Clear concern" : "Mark concern"}</button>
+    </div>
+
+    ${candidate.note ? `<div class="note-block"><span class="note-label">Recruiter note</span><p>${esc(candidate.note)}</p></div>` : ""}
+
+    <div class="strength-risk">
+      <div class="sr-col">
+        <p class="sr-head up">Strengths</p>
+        <ul>${(candidateStrengths(candidate).length
+            ? candidateStrengths(candidate)
+            : ["Not enough evidence yet to confirm strengths"]
+          ).map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
+      </div>
+      <div class="sr-col">
+        <p class="sr-head down">Risks to verify</p>
+        <ul>${candidateRisks(candidate).map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Candidate evidence">
+      <button class="tab ${activeTab === "signals" ? "active" : ""}" type="button" data-tab="signals" role="tab">Evidence signals</button>
+      <button class="tab ${activeTab === "context" ? "active" : ""}" type="button" data-tab="context" role="tab">Source context</button>
+      <button class="tab ${activeTab === "actions" ? "active" : ""}" type="button" data-tab="actions" role="tab">Actions</button>
+    </div>
+
+    <div id="tabContent"></div>
+  `;
+
+  // Wire the recruiter decision buttons. Shortlist/interview reuse the existing
+  // stage toggle; note/concern attach a lightweight flag the card can show.
+  el("#actShortlist").addEventListener("click", () => toggleStage(candidate, true));
+  el("#actInterview").addEventListener("click", () => toggleStage(candidate, false));
+  el("#actNote").addEventListener("click", () => addNote(candidate));
+  el("#actConcern").addEventListener("click", () => markConcern(candidate));
+
+  document.querySelectorAll("#detailContent .tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      activeTab = tab.dataset.tab;
+      renderTab(candidate, rank);
+      syncTabButtons();
+    });
+  });
+
+  renderTab(candidate, rank);
 }
 
-function renderTab(candidate) {
+function renderTab(candidate, rank) {
+  const tabContent = el("#tabContent");
   if (activeTab === "signals") {
     tabContent.innerHTML = `
-      <div class="score-breakdown">
-        <div class="why-rank">
-          <span class="why-label">Why this fit</span>
-          <span>signals ${Math.round(candidate.score.signals.reduce((s, x) => s + x.score, 0) / candidate.score.signals.length)} × 0.62 + role relevance ${candidate.score.relevance} × 0.38${candidate.score.requiresInPerson && candidate.location === "remote-only" ? " − 14 location" : ""} = <strong>${candidate.score.fit}</strong></span>
-        </div>
-      </div>
+      <p class="why-rank">
+        <span class="why-label">Why this candidate ranks #${rank}</span>
+        ${esc(whyParagraph(candidate))}
+        <span class="evidence-confidence">Overall evidence confidence: <strong>${confidenceLabel(candidate.score.confidence)}</strong> (how much real context backs this ranking).</span>
+      </p>
       <div class="signal-stack">
         ${candidate.score.signals
           .map((signal) => `
-            <article class="signal-card">
+            <article class="signal-card ${signal.band.tone}">
               <div class="signal-row">
-                <span class="signal-name">${signal.label}</span>
-                <strong>${signal.score}</strong>
+                <span class="signal-name">${signal.label} — ${signal.band.label}</span>
+                <span class="signal-score">${signal.score}</span>
               </div>
-              <div class="bar-track">
-                <div class="bar-fill ${signal.color}" style="--fill: ${signal.score}%"></div>
-              </div>
-              ${signal.contributors.length
-                ? `<div class="term-row">${signal.contributors
-                    .map((c) => `<span class="term-chip">${esc(c.term)} <em>${c.weight.toFixed(2)}</em></span>`)
-                    .join("")}</div>`
-                : ""}
-              <p class="evidence">${esc(signal.evidence)}</p>
+              <div class="bar-track"><div class="bar-fill" style="--fill: ${signal.score}%"></div></div>
+              <p class="ev-line"><strong>Evidence.</strong> ${esc(signal.evidence)}</p>
+              <p class="ev-line muted-line"><strong>Why it matters.</strong> ${esc(signal.whyItMatters)}</p>
+              <p class="ev-line concern-line"><strong>Concern.</strong> ${esc(signal.concern)}</p>
+              <p class="ev-source">
+                <span>Source: ${signal.sources.length ? esc(signal.sources.join(" + ")) : "no matched evidence"}</span>
+              </p>
             </article>
           `)
           .join("")}
@@ -528,17 +644,18 @@ function renderTab(candidate) {
 
   if (activeTab === "context") {
     tabContent.innerHTML = `
+      <p class="context-note">Raw inputs behind every score. Written context is trusted more than soft signals (weights shown).</p>
       <div class="context-stack">
         <article class="context-block">
           <h4>Resume / profile text <span class="field-weight">weight ${FIELD_WEIGHTS.text.toFixed(2)}</span></h4>
           <p>${esc(candidate.text) || "<em>empty</em>"}</p>
         </article>
         <article class="context-block">
-          <h4>Audio transcript <span class="field-weight">weight ${FIELD_WEIGHTS.audio.toFixed(2)}</span></h4>
+          <h4>Screening call notes <span class="field-weight">weight ${FIELD_WEIGHTS.audio.toFixed(2)}</span></h4>
           <p>${esc(candidate.audio) || "<em>empty</em>"}</p>
         </article>
         <article class="context-block">
-          <h4>Video notes <span class="field-weight">weight ${FIELD_WEIGHTS.video.toFixed(2)}</span></h4>
+          <h4>Interview notes <span class="field-weight">weight ${FIELD_WEIGHTS.video.toFixed(2)}</span></h4>
           <p>${esc(candidate.video) || "<em>empty</em>"}</p>
         </article>
       </div>
@@ -546,38 +663,106 @@ function renderTab(candidate) {
     return;
   }
 
-  const inConvo = candidate.stage === "conversation";
+  // Actions tab: the operational outputs a recruiter acts on.
+  const weakest = [...candidate.score.signals].sort((a, b) => a.score - b.score)[0];
+  const strongest = [...candidate.score.signals].sort((a, b) => b.score - a.score)[0];
   tabContent.innerHTML = `
     <div class="action-stack">
       <article class="action-block">
-        <h4>Candidate-facing explanation</h4>
-        <p>This role was suggested because the profile shows the strongest evidence for ${esc(topSignals(candidate).join(" and "))}, and broadly matches the role brief (relevance ${candidate.score.relevance}/100). Before intro, Figwork should clarify ${esc(candidate.score.gaps[0].toLowerCase())}</p>
-      </article>
-      <article class="action-block">
-        <h4>Recruiter follow-up</h4>
+        <h4>Suggested interview questions</h4>
         <ol>
-          ${candidate.score.gaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}
-          <li>Send a short intro that references concrete evidence, not just title keywords.</li>
+          <li>Walk me through what you personally owned in your strongest project (${esc(strongest.label.toLowerCase())}).</li>
+          <li>${esc(interviewProbe(weakest))}</li>
+          <li>How do you decide when an AI feature is reliable enough to ship to real users?</li>
         </ol>
       </article>
+      <article class="action-block">
+        <h4>Evidence gaps to verify</h4>
+        <ol>${candidate.score.gaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}</ol>
+      </article>
+      <article class="action-block">
+        <h4>Intro email draft</h4>
+        <p class="draft">Hi ${esc(candidate.name.split(" ")[0])}, your work on ${esc(strongest.label.toLowerCase())} stood out for our Full-Stack Engineer role. I'd like to set up a short call to learn more about ${esc(weakest.label.toLowerCase())}. Are you open to a 30-minute conversation this week?</p>
+      </article>
       <div class="action-row">
-        <button class="primary" type="button" id="moveToConvo">${inConvo ? "Move back to shortlist" : "Move to conversation"}</button>
         <button class="secondary" type="button" id="requestContext">Request more context</button>
+        <button class="ghost-btn" type="button" id="compareBtn">Compare with ${esc(compareTargetName(candidate))}</button>
       </div>
     </div>
   `;
 
-  el("#moveToConvo").addEventListener("click", () => {
-    candidate.stage = inConvo ? "shortlist" : "conversation";
-    saveState();
-    render();
-  });
   el("#requestContext").addEventListener("click", () => {
-    // Open the editor focused on the weakest-evidence field for this candidate.
-    const weakest = [...candidate.score.signals].sort((a, b) => a.score - b.score)[0];
     const fieldMap = { aiworkflow: "f_audio", hiring: "f_video" };
     openEditor(candidate.id, fieldMap[weakest.key] || "f_text");
   });
+  const compareBtn = el("#compareBtn");
+  if (compareBtn) {
+    compareBtn.addEventListener("click", () => {
+      const other = compareTargetId(candidate);
+      if (other) {
+        selectedId = other;
+        activeTab = "signals";
+        saveState();
+        render();
+      }
+    });
+  }
+}
+
+// Plain-English "why this ranks here" paragraph, replacing the formula line.
+function whyParagraph(candidate) {
+  const strengths = candidateStrengths(candidate);
+  const first = candidate.name.split(" ")[0];
+  if (!strengths.length) {
+    return `${first} does not yet show strong evidence on the role's named signals; the rank reflects broad relevance (${candidate.score.relevance}/100) more than demonstrated strengths.`;
+  }
+  return `${first} scores high on ${strengths.slice(0, 2).join(" and ").toLowerCase()}. The main gap to verify is ${topGapLabel(candidate)}.`;
+}
+
+function interviewProbe(signal) {
+  return `Your evidence on ${signal.label.toLowerCase()} is ${signal.band.label.toLowerCase()} — can you give a concrete example with measurable impact?`;
+}
+
+function availabilityPlain(candidate) {
+  if (candidate.location === "remote-only") return "Remote only · not available for in-person Sunnyvale";
+  if (candidate.location === "bay-area") return "Bay Area · hybrid preferred";
+  return "Open to Sunnyvale relocation · visa details need review";
+}
+
+function compareTargetId(candidate) {
+  const ranked = getRankedCandidates();
+  const other = ranked.find((c) => c.id !== candidate.id);
+  return other ? other.id : null;
+}
+
+function compareTargetName(candidate) {
+  const id = compareTargetId(candidate);
+  const c = candidates.find((x) => x.id === id);
+  return c ? c.name : "next candidate";
+}
+
+/* ---------- Recruiter decision actions ---------- */
+
+function toggleStage(candidate, wantShortlist) {
+  // "Shortlist" marks the candidate as in conversation; "Request interview"
+  // toggles it back. One stage flag keeps the demo state simple but real.
+  candidate.stage = wantShortlist ? "conversation" : "shortlist";
+  saveState();
+  render();
+}
+
+function addNote(candidate) {
+  const note = prompt(`Add a note for ${candidate.name}:`, candidate.note || "");
+  if (note === null) return;
+  candidate.note = note.trim();
+  saveState();
+  render();
+}
+
+function markConcern(candidate) {
+  candidate.concern = !candidate.concern;
+  saveState();
+  render();
 }
 
 function topSignals(candidate) {
@@ -587,12 +772,64 @@ function topSignals(candidate) {
     .map((signal) => signal.label.toLowerCase());
 }
 
-function renderSummary(scoredCandidates) {
-  candidateCount.textContent = scoredCandidates.length;
-  topScore.textContent = scoredCandidates[0]?.score.fit || 0;
-  reviewCount.textContent = scoredCandidates.filter(
-    (candidate) => candidate.score.confidence < 75 || candidate.score.gaps.length > 1
-  ).length;
+// The 1-2 strongest signals, as short strengths for the decision summary.
+function candidateStrengths(candidate) {
+  return [...candidate.score.signals]
+    .filter((s) => s.score >= 55)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((s) => s.label);
+}
+
+// Risks = the weakest signals plus any logistics flag (location / confidence).
+function candidateRisks(candidate) {
+  const risks = [...candidate.score.signals]
+    .filter((s) => s.score < 50)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 2)
+    .map((s) => `${s.label} not yet demonstrated`);
+  if (candidate.score.requiresInPerson && candidate.location === "remote-only") {
+    risks.push("Not available for in-person Sunnyvale work");
+  } else if (candidate.location === "relocating") {
+    risks.push("Relocation and visa logistics need review");
+  }
+  if (candidate.score.confidence < 70) {
+    risks.push("Limited evidence overall; confidence is moderate");
+  }
+  return risks.slice(0, 4);
+}
+
+// The single short risk line shown on the compact shortlist card.
+function topRisk(candidate) {
+  return candidateRisks(candidate)[0] || "No major risks flagged";
+}
+
+// Plain-English confidence label for the evidence-mass confidence number.
+function confidenceLabel(confidence) {
+  if (confidence >= 80) return "High";
+  if (confidence >= 65) return "Medium";
+  return "Low";
+}
+
+// The weakest signal's label as a plain noun phrase ("hiring-market empathy"),
+// safe to drop into a sentence slot. Distinct from candidateRisks, which
+// returns full risk clauses for the bullet list.
+function topGapLabel(candidate) {
+  const weakest = [...candidate.score.signals].sort((a, b) => a.score - b.score)[0];
+  return weakest ? weakest.label.toLowerCase() : "the open gaps";
+}
+
+// One-line recommended next step for the decision header, conditioned on the
+// dominant strength vs. the dominant gap.
+function recommendedStep(candidate, rank) {
+  const strengths = candidateStrengths(candidate);
+  if (rank === 1 && strengths.length) {
+    return `Interview if you weight ${strengths[0].toLowerCase()} above ${topGapLabel(candidate)}.`;
+  }
+  if (strengths.length) {
+    return `Keep on the shortlist, then verify ${topGapLabel(candidate)} before deciding.`;
+  }
+  return "Request more context before investing recruiter time.";
 }
 
 function render() {
@@ -602,18 +839,14 @@ function render() {
   if (!scoredCandidates.find((candidate) => candidate.id === selectedId)) {
     selectedId = scoredCandidates[0]?.id;
   }
-  renderSummary(scoredCandidates);
+  candidateCount.textContent = scoredCandidates.length;
   renderCandidateList(scoredCandidates);
+  const rank = scoredCandidates.findIndex((c) => c.id === selectedId) + 1;
   const selected = scoredCandidates.find((candidate) => candidate.id === selectedId);
   if (selected) {
-    el("#selectedName").closest(".detail-column").classList.remove("is-empty");
-    renderDetail(selected);
+    renderDetail(selected, rank);
   } else {
-    selectedName.textContent = "No candidate";
-    selectedHeadline.textContent = "";
-    scoreValue.textContent = "0";
-    scoreRing.style.setProperty("--score-deg", "0deg");
-    tabContent.innerHTML = `<p class="empty-note">No candidate selected. Add one or reset the samples.</p>`;
+    detailContent.innerHTML = `<p class="empty-note">No candidate selected. Add one or reset the samples.</p>`;
   }
 }
 
@@ -703,34 +936,31 @@ function resetToSamples() {
   roleInput.value = defaultRoleBrief;
   roleTitle.textContent = DEFAULT_ROLE_TITLE;
   roleSub.textContent = DEFAULT_ROLE_SUB;
-  syncTabButtons();
   closeEditor();
+  closeRoleEditor();
   saveState();
   render();
 }
 
+// Active-tab styling is applied by renderDetail when it rebuilds the tab bar;
+// this keeps the buttons in sync after an out-of-band activeTab change.
 function syncTabButtons() {
-  document.querySelectorAll(".tab").forEach((button) => {
-    const isActive = button.dataset.tab === activeTab;
-    button.classList.toggle("active", isActive);
-    button.setAttribute("aria-selected", String(isActive));
+  document.querySelectorAll("#detailContent .tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === activeTab);
   });
+}
+
+function openRoleEditor() {
+  roleBackdrop.hidden = false;
+  roleInput.focus();
+}
+
+function closeRoleEditor() {
+  roleBackdrop.hidden = true;
 }
 
 /* ---------- Wiring ---------- */
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    activeTab = tab.dataset.tab;
-    syncTabButtons();
-    render();
-  });
-});
-
-roleInput.addEventListener("input", () => {
-  saveState();
-  render();
-});
 sortMode.addEventListener("change", render);
 resetButton.addEventListener("click", resetToSamples);
 addCandidateButton.addEventListener("click", () => openEditor(null));
@@ -741,8 +971,30 @@ el("#editorCancel").addEventListener("click", closeEditor);
 editorBackdrop.addEventListener("click", (e) => {
   if (e.target === editorBackdrop) closeEditor();
 });
+
+// Role brief drawer: edits re-rank live, "Done" / backdrop / Escape close it.
+editRoleButton.addEventListener("click", openRoleEditor);
+el("#roleClose").addEventListener("click", closeRoleEditor);
+el("#roleDone").addEventListener("click", closeRoleEditor);
+roleInput.addEventListener("input", () => {
+  saveState();
+  render();
+});
+roleBackdrop.addEventListener("click", (e) => {
+  if (e.target === roleBackdrop) closeRoleEditor();
+});
+
+// Close candidate-card action menus when clicking elsewhere.
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".menu-wrap")) {
+    document.querySelectorAll(".menu-pop").forEach((p) => (p.hidden = true));
+  }
+});
+
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !editorBackdrop.hidden) closeEditor();
+  if (e.key !== "Escape") return;
+  if (!editorBackdrop.hidden) closeEditor();
+  else if (!roleBackdrop.hidden) closeRoleEditor();
 });
 
 /* ---------- Init ---------- */
