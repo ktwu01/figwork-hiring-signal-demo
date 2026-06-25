@@ -23,11 +23,13 @@
             <button id="resetButton" type="button">Reset</button>
           </div>
           <h2 id="role-title">Full-Stack Software Engineer</h2>
-          <p class="muted">Early-stage AI hiring platform, Sunnyvale</p>
+          <p class="muted" id="role-sub">Early-stage AI hiring platform, Sunnyvale</p>
           <label for="roleInput">Role brief</label>
           <textarea id="roleInput" rows="9"></textarea>
           <div class="signal-list" id="roleSignals"></div>
         </section>
+
+        <p class="hint-note">Edit the role brief or add candidates below. Everything re-ranks live and is saved in your browser.</p>
       </aside>
 
       <section class="workspace" aria-label="Hiring workflow">
@@ -59,11 +61,14 @@
                 <p class="eyebrow">Ranked shortlist</p>
                 <h3 id="shortlist-title">Candidates</h3>
               </div>
-              <select id="sortMode" aria-label="Sort candidates">
-                <option value="fit">Sort by fit</option>
-                <option value="confidence">Sort by confidence</option>
-                <option value="conversation">Sort by conversation readiness</option>
-              </select>
+              <div class="heading-actions">
+                <select id="sortMode" aria-label="Sort candidates">
+                  <option value="fit">Sort by fit</option>
+                  <option value="confidence">Sort by confidence</option>
+                  <option value="conversation">Sort by conversation readiness</option>
+                </select>
+                <button id="addCandidateButton" class="add-btn" type="button">+ Add candidate</button>
+              </div>
             </div>
             <div id="candidateList" class="candidate-list"></div>
           </section>
@@ -92,6 +97,36 @@
         </div>
       </section>
     </main>
+
+    <div class="modal-backdrop" id="editorBackdrop" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+        <div class="modal-head">
+          <h3 id="editorTitle">Add candidate</h3>
+          <button id="editorClose" class="icon-btn" type="button" aria-label="Close">×</button>
+        </div>
+        <form id="editorForm" class="editor-form">
+          <div class="field-grid">
+            <label>Name<input id="f_name" type="text" required placeholder="Jordan Lee"></label>
+            <label>Headline<input id="f_headline" type="text" placeholder="Full-stack engineer"></label>
+          </div>
+          <label>Availability
+            <select id="f_location">
+              <option value="relocating">Open to relocate / onsite</option>
+              <option value="bay-area">Bay Area (hybrid)</option>
+              <option value="remote-only">Remote only</option>
+            </select>
+          </label>
+          <label data-field="text">Resume / profile text<textarea id="f_text" rows="5" placeholder="Paste resume or LinkedIn text..."></textarea></label>
+          <label data-field="audio">Audio transcript (optional)<textarea id="f_audio" rows="3" placeholder="Screening call notes..."></textarea></label>
+          <label data-field="video">Video notes (optional)<textarea id="f_video" rows="3" placeholder="Interview impressions..."></textarea></label>
+          <label>Tags (comma separated)<input id="f_tags" type="text" placeholder="React, Node, LLM eval"></label>
+          <div class="modal-actions">
+            <button type="submit" class="primary">Save candidate</button>
+            <button type="button" class="secondary" id="editorCancel">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
     <script src="app.js"></script>
   </body>

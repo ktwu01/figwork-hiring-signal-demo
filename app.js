@@ -60,7 +60,7 @@ const signalDefinitions = [
   }
 ];
 
-const candidates = [
+const SEED_CANDIDATES = [
   {
     id: "koutian",
     name: "Koutian Wu",
@@ -98,11 +98,52 @@ const candidates = [
 
 const STOPWORDS = new Set(["the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "is", "it", "i", "not", "but", "as", "at", "by", "be", "are", "that", "this", "they", "you", "your", "my", "me", "we", "into", "about", "where", "what", "why", "how", "more", "only", "across", "both", "still", "may", "have", "has", "had", "can", "will", "would", "than", "from"]);
 
+/* ---------- Mutable state (persisted) ---------- */
+
+const STORAGE_KEY = "figwork-demo-state-v1";
+
+// Deep-clone the seed so edits never mutate the constant template.
+function clone(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+let candidates = clone(SEED_CANDIDATES);
 let selectedId = candidates[0].id;
 let activeTab = "signals";
+let editingId = null; // id being edited in the modal, or null when adding
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw);
+    if (Array.isArray(saved.candidates) && saved.candidates.length) {
+      candidates = saved.candidates;
+      if (typeof saved.roleBrief === "string") roleInput.value = saved.roleBrief;
+      selectedId = candidates.some((c) => c.id === saved.selectedId) ? saved.selectedId : candidates[0].id;
+      return true;
+    }
+  } catch (e) {
+    /* ignore corrupt storage and fall back to seed */
+  }
+  return false;
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ candidates, roleBrief: roleInput.value, selectedId })
+    );
+  } catch (e) {
+    /* storage full or blocked: the demo still works in-memory */
+  }
+}
 
 const el = (id) => document.querySelector(id);
 const roleInput = el("#roleInput");
+const roleTitle = el("#role-title");
+const roleSub = el("#role-sub");
 const roleSignals = el("#roleSignals");
 const candidateList = el("#candidateList");
 const selectedName = el("#selectedName");
@@ -115,6 +156,23 @@ const candidateCount = el("#candidateCount");
 const topScore = el("#topScore");
 const reviewCount = el("#reviewCount");
 const resetButton = el("#resetButton");
+const addCandidateButton = el("#addCandidateButton");
+const editorBackdrop = el("#editorBackdrop");
+const editorForm = el("#editorForm");
+const editorTitle = el("#editorTitle");
+
+const DEFAULT_ROLE_TITLE = roleTitle.textContent;
+const DEFAULT_ROLE_SUB = roleSub.textContent;
+
+// Escape user-provided text before it goes into innerHTML.
+function esc(text) {
+  return String(text == null ? "" : text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 /* ---------- Text processing ---------- */
 
@@ -188,6 +246,8 @@ function buildCorpus() {
   return { docById, avgLength, idf };
 }
 
+// Rebuilt on every render so adding/editing/removing candidates recomputes IDF
+// across the new corpus (a rarer term in a bigger pool carries more weight).
 let CORPUS = buildCorpus();
 
 // BM25 contribution of a single term for a candidate document.
@@ -375,36 +435,57 @@ function renderRoleSignals() {
 }
 
 function renderCandidateList(scoredCandidates) {
+  if (!scoredCandidates.length) {
+    candidateList.innerHTML = `
+      <div class="empty-note">
+        No candidates yet. <strong>+ Add candidate</strong> to paste a resume and see the ranking,
+        or use <strong>Reset</strong> to restore the sample set.
+      </div>`;
+    return;
+  }
+
   candidateList.innerHTML = scoredCandidates
     .map((candidate, index) => `
-      <button class="candidate-card ${candidate.id === selectedId ? "active" : ""}" type="button" data-id="${candidate.id}">
-        <div class="candidate-topline">
-          <span class="candidate-name"><span class="rank-badge">#${index + 1}</span>${candidate.name}</span>
-          <span class="candidate-score">${candidate.score.fit}</span>
+      <div class="candidate-card ${candidate.id === selectedId ? "active" : ""}" data-id="${esc(candidate.id)}">
+        <button class="card-main" type="button" data-select="${esc(candidate.id)}">
+          <div class="candidate-topline">
+            <span class="candidate-name"><span class="rank-badge">#${index + 1}</span>${esc(candidate.name)}</span>
+            <span class="candidate-score">${candidate.score.fit}</span>
+          </div>
+          <p>${esc(candidate.headline)}${candidate.stage === "conversation" ? ` <span class="stage-badge">In conversation</span>` : ""}</p>
+          <div class="mini-metrics">
+            <span title="Role relevance (cosine)">rel ${candidate.score.relevance}</span>
+            <span title="Calibrated confidence">conf ${candidate.score.confidence}</span>
+            <span title="Conversation readiness">conv ${candidate.score.conversation}</span>
+          </div>
+          <div class="tag-row">
+            ${candidate.tags.slice(0, 4).map((tag) => `<span class="tag">${esc(tag)}</span>`).join("")}
+          </div>
+        </button>
+        <div class="card-tools">
+          <button class="card-tool" type="button" data-edit="${esc(candidate.id)}" aria-label="Edit ${esc(candidate.name)}">Edit</button>
+          <button class="card-tool danger" type="button" data-remove="${esc(candidate.id)}" aria-label="Remove ${esc(candidate.name)}">Remove</button>
         </div>
-        <p>${candidate.headline}</p>
-        <div class="mini-metrics">
-          <span title="Role relevance (cosine)">rel ${candidate.score.relevance}</span>
-          <span title="Calibrated confidence">conf ${candidate.score.confidence}</span>
-          <span title="Conversation readiness">conv ${candidate.score.conversation}</span>
-        </div>
-        <div class="tag-row">
-          ${candidate.tags.slice(0, 4).map((tag) => `<span class="tag">${tag}</span>`).join("")}
-        </div>
-      </button>
+      </div>
     `)
     .join("");
 
-  candidateList.querySelectorAll(".candidate-card").forEach((button) => {
-    button.addEventListener("click", () => {
-      selectedId = button.dataset.id;
+  candidateList.querySelectorAll("[data-select]").forEach((b) =>
+    b.addEventListener("click", () => {
+      selectedId = b.dataset.select;
       render();
-    });
-  });
+    })
+  );
+  candidateList.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => openEditor(b.dataset.edit))
+  );
+  candidateList.querySelectorAll("[data-remove]").forEach((b) =>
+    b.addEventListener("click", () => removeCandidate(b.dataset.remove))
+  );
 }
 
 function renderDetail(candidate) {
-  selectedName.textContent = candidate.name;
+  selectedName.textContent = candidate.name + (candidate.stage === "conversation" ? "  (in conversation)" : "");
   selectedHeadline.textContent = `${candidate.headline} · ${candidate.availability}`;
   scoreValue.textContent = candidate.score.fit;
   scoreRing.style.setProperty("--score-deg", `${candidate.score.fit * 3.6}deg`);
@@ -433,10 +514,10 @@ function renderTab(candidate) {
               </div>
               ${signal.contributors.length
                 ? `<div class="term-row">${signal.contributors
-                    .map((c) => `<span class="term-chip">${c.term} <em>${c.weight.toFixed(2)}</em></span>`)
+                    .map((c) => `<span class="term-chip">${esc(c.term)} <em>${c.weight.toFixed(2)}</em></span>`)
                     .join("")}</div>`
                 : ""}
-              <p class="evidence">${signal.evidence}</p>
+              <p class="evidence">${esc(signal.evidence)}</p>
             </article>
           `)
           .join("")}
@@ -450,40 +531,53 @@ function renderTab(candidate) {
       <div class="context-stack">
         <article class="context-block">
           <h4>Resume / profile text <span class="field-weight">weight ${FIELD_WEIGHTS.text.toFixed(2)}</span></h4>
-          <p>${candidate.text}</p>
+          <p>${esc(candidate.text) || "<em>empty</em>"}</p>
         </article>
         <article class="context-block">
           <h4>Audio transcript <span class="field-weight">weight ${FIELD_WEIGHTS.audio.toFixed(2)}</span></h4>
-          <p>${candidate.audio}</p>
+          <p>${esc(candidate.audio) || "<em>empty</em>"}</p>
         </article>
         <article class="context-block">
           <h4>Video notes <span class="field-weight">weight ${FIELD_WEIGHTS.video.toFixed(2)}</span></h4>
-          <p>${candidate.video}</p>
+          <p>${esc(candidate.video) || "<em>empty</em>"}</p>
         </article>
       </div>
     `;
     return;
   }
 
+  const inConvo = candidate.stage === "conversation";
   tabContent.innerHTML = `
     <div class="action-stack">
       <article class="action-block">
         <h4>Candidate-facing explanation</h4>
-        <p>This role was suggested because your profile shows the strongest evidence for ${topSignals(candidate).join(" and ")}, and broadly matches the role brief (relevance ${candidate.score.relevance}/100). Before intro, Figwork should clarify ${candidate.score.gaps[0].toLowerCase()}</p>
+        <p>This role was suggested because the profile shows the strongest evidence for ${esc(topSignals(candidate).join(" and "))}, and broadly matches the role brief (relevance ${candidate.score.relevance}/100). Before intro, Figwork should clarify ${esc(candidate.score.gaps[0].toLowerCase())}</p>
       </article>
       <article class="action-block">
         <h4>Recruiter follow-up</h4>
         <ol>
-          ${candidate.score.gaps.map((gap) => `<li>${gap}</li>`).join("")}
+          ${candidate.score.gaps.map((gap) => `<li>${esc(gap)}</li>`).join("")}
           <li>Send a short intro that references concrete evidence, not just title keywords.</li>
         </ol>
       </article>
       <div class="action-row">
-        <button class="primary" type="button">Move to conversation</button>
-        <button class="secondary" type="button">Request more context</button>
+        <button class="primary" type="button" id="moveToConvo">${inConvo ? "Move back to shortlist" : "Move to conversation"}</button>
+        <button class="secondary" type="button" id="requestContext">Request more context</button>
       </div>
     </div>
   `;
+
+  el("#moveToConvo").addEventListener("click", () => {
+    candidate.stage = inConvo ? "shortlist" : "conversation";
+    saveState();
+    render();
+  });
+  el("#requestContext").addEventListener("click", () => {
+    // Open the editor focused on the weakest-evidence field for this candidate.
+    const weakest = [...candidate.score.signals].sort((a, b) => a.score - b.score)[0];
+    const fieldMap = { aiworkflow: "f_audio", hiring: "f_video" };
+    openEditor(candidate.id, fieldMap[weakest.key] || "f_text");
+  });
 }
 
 function topSignals(candidate) {
@@ -502,6 +596,7 @@ function renderSummary(scoredCandidates) {
 }
 
 function render() {
+  CORPUS = buildCorpus(); // recompute IDF across the current candidate set
   renderRoleSignals();
   const scoredCandidates = getRankedCandidates();
   if (!scoredCandidates.find((candidate) => candidate.id === selectedId)) {
@@ -511,37 +606,148 @@ function render() {
   renderCandidateList(scoredCandidates);
   const selected = scoredCandidates.find((candidate) => candidate.id === selectedId);
   if (selected) {
+    el("#selectedName").closest(".detail-column").classList.remove("is-empty");
     renderDetail(selected);
   } else {
-    tabContent.innerHTML = `<p class="empty-note">No candidate selected.</p>`;
+    selectedName.textContent = "No candidate";
+    selectedHeadline.textContent = "";
+    scoreValue.textContent = "0";
+    scoreRing.style.setProperty("--score-deg", "0deg");
+    tabContent.innerHTML = `<p class="empty-note">No candidate selected. Add one or reset the samples.</p>`;
   }
 }
 
-document.querySelectorAll(".tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    activeTab = tab.dataset.tab;
-    document.querySelectorAll(".tab").forEach((button) => {
-      const isActive = button === tab;
-      button.classList.toggle("active", isActive);
-      button.setAttribute("aria-selected", String(isActive));
-    });
-    render();
-  });
-});
+/* ---------- Candidate CRUD + editor modal ---------- */
 
-roleInput.addEventListener("input", render);
-sortMode.addEventListener("change", render);
-resetButton.addEventListener("click", () => {
-  roleInput.value = defaultRoleBrief;
+function slugId(name) {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "candidate";
+  let id = base;
+  let n = 2;
+  while (candidates.some((c) => c.id === id)) id = `${base}-${n++}`;
+  return id;
+}
+
+function openEditor(id, focusFieldId) {
+  editingId = id || null;
+  const c = id ? candidates.find((x) => x.id === id) : null;
+  editorTitle.textContent = c ? `Edit ${c.name}` : "Add candidate";
+  el("#f_name").value = c ? c.name : "";
+  el("#f_headline").value = c ? c.headline : "";
+  el("#f_location").value = c ? c.location : "relocating";
+  el("#f_text").value = c ? c.text : "";
+  el("#f_audio").value = c ? c.audio : "";
+  el("#f_video").value = c ? c.video : "";
+  el("#f_tags").value = c ? c.tags.join(", ") : "";
+  editorBackdrop.hidden = false;
+  const focusEl = (focusFieldId && el("#" + focusFieldId)) || el("#f_name");
+  focusEl.focus();
+}
+
+function closeEditor() {
+  editorBackdrop.hidden = true;
+  editingId = null;
+}
+
+function availabilityLabel(location) {
+  if (location === "remote-only") return "Remote only";
+  if (location === "bay-area") return "Bay Area, hybrid preferred";
+  return "Open to relocation / onsite";
+}
+
+function submitEditor(event) {
+  event.preventDefault();
+  const name = el("#f_name").value.trim();
+  if (!name) {
+    el("#f_name").focus();
+    return;
+  }
+  const data = {
+    name,
+    headline: el("#f_headline").value.trim() || "Candidate",
+    location: el("#f_location").value,
+    availability: availabilityLabel(el("#f_location").value),
+    text: el("#f_text").value.trim(),
+    audio: el("#f_audio").value.trim(),
+    video: el("#f_video").value.trim(),
+    tags: el("#f_tags").value.split(",").map((t) => t.trim()).filter(Boolean)
+  };
+
+  if (editingId) {
+    const c = candidates.find((x) => x.id === editingId);
+    Object.assign(c, data);
+    selectedId = editingId;
+  } else {
+    const id = slugId(name);
+    candidates.push({ id, stage: "shortlist", ...data });
+    selectedId = id;
+  }
+  closeEditor();
+  saveState();
+  render();
+}
+
+function removeCandidate(id) {
+  const c = candidates.find((x) => x.id === id);
+  if (!c) return;
+  if (!confirm(`Remove ${c.name} from the shortlist?`)) return;
+  candidates = candidates.filter((x) => x.id !== id);
+  if (selectedId === id) selectedId = candidates[0]?.id;
+  saveState();
+  render();
+}
+
+function resetToSamples() {
+  candidates = clone(SEED_CANDIDATES);
   selectedId = candidates[0].id;
   activeTab = "signals";
+  roleInput.value = defaultRoleBrief;
+  roleTitle.textContent = DEFAULT_ROLE_TITLE;
+  roleSub.textContent = DEFAULT_ROLE_SUB;
+  syncTabButtons();
+  closeEditor();
+  saveState();
+  render();
+}
+
+function syncTabButtons() {
   document.querySelectorAll(".tab").forEach((button) => {
     const isActive = button.dataset.tab === activeTab;
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-selected", String(isActive));
   });
-  render();
+}
+
+/* ---------- Wiring ---------- */
+
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    activeTab = tab.dataset.tab;
+    syncTabButtons();
+    render();
+  });
 });
 
-roleInput.value = defaultRoleBrief;
+roleInput.addEventListener("input", () => {
+  saveState();
+  render();
+});
+sortMode.addEventListener("change", render);
+resetButton.addEventListener("click", resetToSamples);
+addCandidateButton.addEventListener("click", () => openEditor(null));
+
+editorForm.addEventListener("submit", submitEditor);
+el("#editorClose").addEventListener("click", closeEditor);
+el("#editorCancel").addEventListener("click", closeEditor);
+editorBackdrop.addEventListener("click", (e) => {
+  if (e.target === editorBackdrop) closeEditor();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !editorBackdrop.hidden) closeEditor();
+});
+
+/* ---------- Init ---------- */
+
+if (!loadState()) {
+  roleInput.value = defaultRoleBrief;
+}
 render();
