@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Figwork Hiring Signal Demo</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Demo navigation">
+        <div class="brand-block">
+          <div class="mark" aria-hidden="true">F</div>
+          <div>
+            <h1>Hiring Signal Demo</h1>
+            <p>Static prototype for candidate-role fit review</p>
+          </div>
+        </div>
+
+        <section class="role-panel" aria-labelledby="role-title">
+          <div class="section-title">
+            <span class="label">Role</span>
+            <button id="resetButton" type="button">Reset</button>
+          </div>
+          <h2 id="role-title">Full-Stack Software Engineer</h2>
+          <p class="muted">Early-stage AI hiring platform, Sunnyvale</p>
+          <label for="roleInput">Role brief</label>
+          <textarea id="roleInput" rows="9"></textarea>
+          <div class="signal-list" id="roleSignals"></div>
+        </section>
+      </aside>
+
+      <section class="workspace" aria-label="Hiring workflow">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Recruiter workbench</p>
+            <h2>Turn candidate context into useful hiring signals.</h2>
+          </div>
+          <div class="summary-strip" aria-label="Demo summary">
+            <div>
+              <strong id="candidateCount">0</strong>
+              <span>Candidates</span>
+            </div>
+            <div>
+              <strong id="topScore">0</strong>
+              <span>Top fit</span>
+            </div>
+            <div>
+              <strong id="reviewCount">0</strong>
+              <span>Needs review</span>
+            </div>
+          </div>
+        </header>
+
+        <div class="content-grid">
+          <section class="candidate-column" aria-labelledby="shortlist-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Ranked shortlist</p>
+                <h3 id="shortlist-title">Candidates</h3>
+              </div>
+              <select id="sortMode" aria-label="Sort candidates">
+                <option value="fit">Sort by fit</option>
+                <option value="confidence">Sort by confidence</option>
+                <option value="conversation">Sort by conversation readiness</option>
+              </select>
+            </div>
+            <div id="candidateList" class="candidate-list"></div>
+          </section>
+
+          <section class="detail-column" aria-live="polite">
+            <div class="detail-header">
+              <div>
+                <p class="eyebrow">Selected profile</p>
+                <h3 id="selectedName">Candidate</h3>
+                <p id="selectedHeadline" class="muted"></p>
+              </div>
+              <div class="score-ring" id="scoreRing" aria-label="Fit score">
+                <span id="scoreValue">0</span>
+                <small>fit</small>
+              </div>
+            </div>
+
+            <div class="tabs" role="tablist" aria-label="Candidate evidence">
+              <button class="tab active" type="button" data-tab="signals" role="tab" aria-selected="true">Signals</button>
+              <button class="tab" type="button" data-tab="context" role="tab" aria-selected="false">Context</button>
+              <button class="tab" type="button" data-tab="actions" role="tab" aria-selected="false">Actions</button>
+            </div>
+
+            <div id="tabContent"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
