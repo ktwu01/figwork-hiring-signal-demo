@@ -261,10 +261,17 @@ h1, h2, h3, h4, p {
 .candidate-list {
   display: grid;
   gap: 10px;
+  /* A grid container's implicit columns default to min-content; force the single
+     column to the track width so the cards below can actually shrink to fit. */
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .candidate-card {
   position: relative;
+  /* Grid items default to min-width: auto (min-content), which let the cards
+     grow to ~397px and float over the decision panel. min-width: 0 makes each
+     card honor its 340px column; inner text truncates instead of overflowing. */
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 11px;
   background: var(--surface);
